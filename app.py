@@ -3,60 +3,53 @@ from scrapfly import ScrapflyClient, ScrapeConfig
 from bs4 import BeautifulSoup
 import os
 import asyncio
-from telegram import Update, Bot
-from telegram.ext import ApplicationBuilder, MessageHandler, filters
+
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
 app = Flask(__name__)
 
-# 환경변수 가져오기
+# 환경 변수에서 키 불러오기
 SCRAPFLY_KEY = os.getenv("SCRAPFLY_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 client = ScrapflyClient(key=SCRAPFLY_KEY)
-bot = Bot(token=TELEGRAM_TOKEN)
 
-# 메시지 핸들러
-async def handle_message(update: Update, context):
-    print("✅ 여기까지 실행됨 - handle_message 진입")
+# 텔레그램 봇 초기화
+bot_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    try:
-        url = update.message.text.strip()
-        print(f"🔗 수신된 URL: {url}")
-
-        result = client.scrape(ScrapeConfig(url=url))
-        soup = BeautifulSoup(result.content, "html.parser")
-
-        title_tag = soup.find("meta", property="og:title")
-        desc_tag = soup.find("meta", property="og:description")
-
-        title = title_tag["content"] if title_tag else "제목 없음"
-        desc = desc_tag["content"] if desc_tag else "설명 없음"
-
-        print(f"📌 파싱 결과 - title: {title}, desc: {desc}")
-
-        reply = f"📌 *제목:* {title}\n📝 *설명:* {desc}"
-        await update.message.reply_markdown(reply)
-        print("✅ 메시지 전송 성공")
-    except Exception as e:
-        print(f"❌ 예외 발생: {e}")
-        await update.message.reply_text(f"❌ 오류 발생: {e}")
-
-# 웹훅 수신 엔드포인트
 @app.route(f"/webhook/{TELEGRAM_TOKEN}", methods=["POST"])
-def telegram_webhook():
-    print("📬 Webhook 호출됨")
-    update = Update.de_json(request.get_json(force=True), bot)
-
-    app_telegram = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app_telegram.process_update(update)
-
+async def telegram_webhook():
+    update = Update.de_json(request.get_json(force=True), bot_app.bot)
+    await bot_app.process_update(update)
     return "OK", 200
 
-# 헬스체크용 루트
 @app.route("/")
 def index():
     return "Telegram Insta Bot is running!"
 
+# 메시지 핸들러 함수
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if "instagram.com" not in text:
+        return
+
+    await update.message.reply_text("🔍 인스타 링크를 분석 중입니다...")
+
+    try:
+        result = client.scrape(ScrapeConfig(url=text))
+        soup = BeautifulSoup(result.content, "html.parser")
+        title = soup.find("meta", property="og:title")["content"]
+        desc = soup.find("meta", property="og:description")["content"]
+
+        msg = f"📌 *제목*: {title}\n📝 *설명*: {desc}\n🔗 *링크*: {text}"
+        await update.message.reply_markdown(msg)
+    except Exception as e:
+        await update.message.reply_text(f"❗ 오류 발생: {e}")
+
+# 링크 메시지를 받기 위한 핸들러 등록
+bot_app.add_handler(MessageHandler(filters.ALL, handle_message))
+
+# 앱 실행
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    bot_app.run_polling()
