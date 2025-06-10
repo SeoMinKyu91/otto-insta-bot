@@ -1,0 +1,4 @@
+Flask==2.3.2
+python-telegram-bot==20.7
+scrapfly-sdk==0.8.23
+beautifulsoup4==4.12.2
